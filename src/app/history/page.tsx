@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAccount, usePublicClient, useChainId } from "wagmi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Wallet, Trophy, Loader2, RotateCcw, FileText, Trash2, ExternalLink, ChevronDown, ChevronUp, CheckCircle2, XCircle, Copy, Check } from "lucide-react";
 import { POCW_SBT_ABI, getChainConfig } from "@/lib/contracts";
-import { loadHistory, clearHistory, saveToHistory, saveChainSnapshot, isChainReset, type SBTRecord } from "@/lib/history";
+import { loadHistory, clearHistory, setHistory, saveChainSnapshot, isChainReset, isHistoryExpired, hasFreshHistorySnapshot, type SBTRecord } from "@/lib/history";
 import { WalletButton } from "@/components/WalletButton";
 
 /** Explorer URLs per chain. Add entries as contracts are deployed. */
@@ -43,8 +43,10 @@ export default function HistoryPage() {
 
   useEffect(() => {
     setMounted(true);
-    // Load history filtered by current chain
-    setRecords(loadHistory(chainId));
+    // Load valid (non-expired) history for current chain.
+    const cached = loadHistory(chainId);
+    setRecords(cached);
+    setScanned(cached.length > 0 || hasFreshHistorySnapshot(chainId));
   }, [chainId]);
 
   // Detect chain reset (e.g. Anvil restart) and clear stale cache
@@ -59,7 +61,7 @@ export default function HistoryPage() {
     }).catch(() => {});
   }, [mounted, chainId, publicClient]);
 
-  const scanOnChain = async () => {
+  const scanOnChain = useCallback(async () => {
     if (!address || !hasContracts || !isConnected || !publicClient) return;
     setLoading(true);
     setError(null);
@@ -85,6 +87,9 @@ export default function HistoryPage() {
       });
 
       if (logs.length === 0) {
+        // Keep an empty snapshot so we don't repeatedly re-fetch until TTL expires.
+        setHistory([], chainId);
+        setRecords([]);
         setScanned(true);
         setLoading(false);
         return;
@@ -131,9 +136,9 @@ export default function HistoryPage() {
         };
 
         found.push(record);
-        saveToHistory(record);
       }
 
+      setHistory(found, chainId);
       setRecords(found);
       setScanned(true);
     } catch (err) {
@@ -141,7 +146,15 @@ export default function HistoryPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [address, hasContracts, isConnected, publicClient, sbtAddress, chainId]);
+
+  // Auto-refresh history on page entry if cache is older than 30 minutes.
+  useEffect(() => {
+    if (!mounted || !isConnected || !hasContracts || loading) return;
+    if (isHistoryExpired(chainId)) {
+      scanOnChain();
+    }
+  }, [mounted, isConnected, hasContracts, loading, scanOnChain, chainId]);
 
   const handleClear = () => {
     clearHistory();

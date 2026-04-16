@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useChainId, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { PoCWResult, OnchainAttestation } from "@/lib/api";
-import { saveToHistory } from "@/lib/history";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,18 +48,6 @@ export function GradingResults({
   const chainId = useChainId();
 
   const scoreRounded = Math.round(result.score);
-
-  // Save to history when results are shown
-  useEffect(() => {
-    saveToHistory({
-      contentId: result.contentId,
-      score: scoreRounded,
-      subject: result.subject,
-      timestamp: result.timestamp,
-      passed: result.competenceIndicator,
-      chainId,
-    });
-  }, []);
   const ciLow = Math.round(result.confidence_interval[0]);
   const ciHigh = Math.round(result.confidence_interval[1]);
 
