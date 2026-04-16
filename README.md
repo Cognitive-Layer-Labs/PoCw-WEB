@@ -26,6 +26,37 @@ npm run dev
 
 Default UI URL: `http://localhost:3001`
 
+## Cloudflare Workers Deployment (OpenNext)
+
+This repo is configured to deploy on Cloudflare Workers using OpenNext.
+
+- Build command: `npx opennextjs-cloudflare build`
+- Deploy command: `npx opennextjs-cloudflare deploy`
+
+Equivalent npm scripts:
+
+- `npm run cf:build` -> build only
+- `npm run cf:deploy` -> deploy only
+- `npm run deploy` -> build then deploy
+- `npm run preview` -> build then preview in Workers runtime
+
+Configuration files used:
+
+- `wrangler.jsonc`
+- `open-next.config.ts`
+
+You do not need a `wrangler.toml` because this repo uses `wrangler.jsonc`.
+
+### Cloudflare Variables/Secrets
+
+For Cloudflare environments (Preview/Production), set values in Cloudflare dashboard instead of relying on local `.env.*` files:
+
+- Secret: `POCW_API_KEY`
+- Variable: `POCW_ORACLE_BASE_URL`
+- Variables: `NEXT_PUBLIC_CONTROLLER_ADDRESS_84532`, `NEXT_PUBLIC_SBT_ADDRESS_84532` (or mainnet equivalents)
+
+Do not create `NEXT_PUBLIC_POCW_API_KEY`.
+
 ## Environment Variables
 
 ### Required frontend vars
@@ -46,9 +77,9 @@ In Next.js, only variables prefixed with `NEXT_PUBLIC_` are exposed to browser c
 ## Which env file for Local vs Testnet/Mainnet
 
 - Local development (`npm run dev`): use `.env.local`
-- Testnet or mainnet deployment builds (`npm run build` then `npm start`): use `.env.production`
+- Cloudflare deployment (Preview/Production): set variables in Cloudflare dashboard
 
-Because these values are compiled into the frontend at build time, always rebuild after env changes.
+Because these values are compiled into the frontend at build time, redeploy after env/secret changes.
 
 ## Detailed Deployment Env Modes
 
