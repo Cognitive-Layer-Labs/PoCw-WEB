@@ -1,7 +1,7 @@
 import { VerifyFlow } from "@/components/VerifyFlow";
 
 export const metadata = {
-  title: "Verify Knowledge — PoCW",
+  title: "PoCW / Proof of Cognitife Work",
   description: "Adaptive knowledge verification with on-chain attestation.",
 };
 

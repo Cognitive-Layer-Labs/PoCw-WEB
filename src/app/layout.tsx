@@ -8,7 +8,7 @@ import { WalletButton } from "@/components/WalletButton";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "PoCW — Proof of Cognitive Work",
+  title: "PoCW / Proof of Cognitife Work",
   description: "Verify your knowledge on-chain with adaptive AI testing and Soulbound Tokens.",
 };
 
