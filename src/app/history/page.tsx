@@ -47,6 +47,18 @@ const CHAIN_META: Record<number, {
 
 const CHAIN_PRIORITY = [84532, 8453, 31337] as const;
 
+const LOG_CHUNK_SIZE_BY_CHAIN: Record<number, bigint> = {
+  31337: BigInt("50000"),
+  84532: BigInt("9000"),
+  8453: BigInt("9000"),
+};
+
+const LOG_LOOKBACK_FALLBACK_BY_CHAIN: Record<number, bigint> = {
+  31337: BigInt("100000"),
+  84532: BigInt("300000"),
+  8453: BigInt("300000"),
+};
+
 const BLOOM_LEVELS = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"];
 
 const QTYPE_COLORS: Record<string, string> = {
@@ -61,7 +73,7 @@ export default function HistoryPage() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const publicClient = usePublicClient();
-  const { sbtAddress, controllerAddress } = getChainConfig(chainId);
+  const { sbtAddress, controllerAddress, sbtDeploymentBlock } = getChainConfig(chainId);
   const hasContracts = sbtAddress !== ZERO_ADDRESS && controllerAddress !== ZERO_ADDRESS;
 
   const deployedChainIds = CHAIN_PRIORITY.filter((id) => {
@@ -81,6 +93,7 @@ export default function HistoryPage() {
 
   const effectiveChainConfig = getChainConfig(effectiveChainId);
   const effectiveSbtAddress = effectiveChainConfig.sbtAddress;
+  const effectiveSbtDeploymentBlock = effectiveChainConfig.sbtDeploymentBlock ?? sbtDeploymentBlock;
   const explorerUrl = EXPLORER_URLS[effectiveChainId];
 
   const [records, setRecords] = useState<SBTRecord[]>([]);
@@ -137,33 +150,55 @@ export default function HistoryPage() {
   }, [mounted, chainId, publicClient]);
 
   const scanOnChain = useCallback(async () => {
-    if (!address || !hasContracts || !isConnected || !publicClient) return;
+    if (!address || !hasContracts || !isConnected || !publicClient || effectiveSbtAddress === ZERO_ADDRESS) return;
     setLoading(true);
     setError(null);
 
     try {
-      const logs = await publicClient.getLogs({
-        address: sbtAddress as `0x${string}`,
-        event: {
-          type: "event",
-          name: "TransferSingle",
-          inputs: [
-            { indexed: true, name: "operator", type: "address" },
-            { indexed: true, name: "from", type: "address" },
-            { indexed: true, name: "to", type: "address" },
-            { indexed: false, name: "id", type: "uint256" },
-            { indexed: false, name: "value", type: "uint256" },
-          ],
-        } as const,
-        args: {
-          from: "0x0000000000000000000000000000000000000000",
-          to: address as `0x${string}`,
-        },
-      });
+      const latestBlock = await publicClient.getBlockNumber();
+      const chunkSize = LOG_CHUNK_SIZE_BY_CHAIN[effectiveChainId] ?? BigInt("9000");
+      const lookback = LOG_LOOKBACK_FALLBACK_BY_CHAIN[effectiveChainId] ?? BigInt("300000");
+      const fromBlock = effectiveSbtDeploymentBlock !== undefined
+        ? effectiveSbtDeploymentBlock
+        : latestBlock > lookback
+          ? latestBlock - lookback
+          : BigInt(0);
+
+      const transferSingleEvent = {
+        type: "event",
+        name: "TransferSingle",
+        inputs: [
+          { indexed: true, name: "operator", type: "address" },
+          { indexed: true, name: "from", type: "address" },
+          { indexed: true, name: "to", type: "address" },
+          { indexed: false, name: "id", type: "uint256" },
+          { indexed: false, name: "value", type: "uint256" },
+        ],
+      } as const;
+
+      const logs = [] as Array<{ args: { id?: bigint } }>;
+      for (let start = fromBlock; start <= latestBlock; start += chunkSize) {
+        const end = start + chunkSize - BigInt(1) > latestBlock
+          ? latestBlock
+          : start + chunkSize - BigInt(1);
+
+        const chunkLogs = await publicClient.getLogs({
+          address: effectiveSbtAddress as `0x${string}`,
+          fromBlock: start,
+          toBlock: end,
+          event: transferSingleEvent,
+          args: {
+            from: ZERO_ADDRESS,
+            to: address as `0x${string}`,
+          },
+        });
+
+        logs.push(...chunkLogs);
+      }
 
       if (logs.length === 0) {
         // Keep an empty snapshot so we don't repeatedly re-fetch until TTL expires.
-        setHistory([], chainId);
+        setHistory([], effectiveChainId);
         setRecords([]);
         setScanned(true);
         setLoading(false);
@@ -174,12 +209,17 @@ export default function HistoryPage() {
       const seen = new Set<number>();
 
       for (const log of logs) {
-        const tokenId = Number(log.args.id);
+        const rawId = log.args.id;
+        if (typeof rawId !== "bigint") continue;
+
+        const tokenId = Number(rawId);
+        if (!Number.isSafeInteger(tokenId) || tokenId < 0) continue;
+
         if (seen.has(tokenId)) continue;
         seen.add(tokenId);
 
         const uri = await publicClient.readContract({
-          address: sbtAddress as `0x${string}`,
+          address: effectiveSbtAddress as `0x${string}`,
           abi: POCW_SBT_ABI,
           functionName: "uri",
           args: [BigInt(tokenId)],
@@ -196,7 +236,7 @@ export default function HistoryPage() {
           subject: meta.subject,
           timestamp: meta.timestamp,
           passed: meta.passed,
-          chainId,
+          chainId: effectiveChainId,
           theta: meta.theta,
           se: meta.se,
           questions: meta.questions,
@@ -213,7 +253,7 @@ export default function HistoryPage() {
         found.push(record);
       }
 
-      setHistory(found, chainId);
+      setHistory(found, effectiveChainId);
       setRecords(found);
       setScanned(true);
     } catch (err) {
@@ -221,7 +261,7 @@ export default function HistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [address, hasContracts, isConnected, publicClient, sbtAddress, chainId]);
+  }, [address, hasContracts, isConnected, publicClient, effectiveSbtAddress, effectiveChainId, effectiveSbtDeploymentBlock]);
 
   // Auto-refresh history on page entry if cache is older than 30 minutes.
   useEffect(() => {
@@ -632,6 +672,13 @@ function decodeBase64Uri(uri: string): {
 
     const attrs = data.attributes || [];
     const find = (trait: string) => attrs.find((a: any) => a.trait_type === trait)?.value;
+    const asNumber = (value: unknown): number | undefined => {
+      if (typeof value === "number") return value;
+      if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
+        return Number(value);
+      }
+      return undefined;
+    };
 
     const score = find("Score") ?? 0;
     const theta = find("Theta");
@@ -649,21 +696,21 @@ function decodeBase64Uri(uri: string): {
     const converged = find("Converged");
 
     return {
-      score,
+      score: asNumber(score) ?? 0,
       subject: data.name ?? "Unknown",
       timestamp: typeof rawTs === "string" ? rawTs : "",
-      passed: passedAttr === 1,
-      theta: typeof theta === "number" ? theta : undefined,
-      se: typeof se === "number" ? se : undefined,
-      questions: typeof questions === "number" ? questions : undefined,
+      passed: passedAttr === 1 || passedAttr === "1" || passedAttr === true,
+      theta: asNumber(theta),
+      se: asNumber(se),
+      questions: asNumber(questions),
       bloom: typeof bloom === "string" ? bloom : undefined,
       title: typeof title === "string" ? title : undefined,
       source: typeof source === "string" ? source : undefined,
       oracle: typeof oracle === "string" ? oracle : undefined,
       qTypes: typeof qTypes === "string" ? qTypes : undefined,
-      ciLow: typeof ciLow === "number" ? ciLow : undefined,
-      ciHigh: typeof ciHigh === "number" ? ciHigh : undefined,
-      converged: converged === 1,
+      ciLow: asNumber(ciLow),
+      ciHigh: asNumber(ciHigh),
+      converged: converged === 1 || converged === "1" || converged === true,
     };
   } catch {
     return null;

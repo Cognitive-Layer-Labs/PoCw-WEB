@@ -59,9 +59,11 @@ export const ERROR_SELECTORS = {
 export interface ChainDeploy {
   controllerAddress: `0x${string}`;
   sbtAddress: `0x${string}`;
+  sbtDeploymentBlock?: bigint;
 }
 
 const ZERO = "0x0000000000000000000000000000000000000000" as const;
+const BASE_SEPOLIA_SBT_DEPLOY_BLOCK = BigInt("40299267");
 
 // Keep production-safe fallbacks for Base Sepolia in case build-time NEXT_PUBLIC_* vars
 // are not injected by the deployment platform during static client bundling.
@@ -74,6 +76,14 @@ function readAddressEnv(name: string, fallback: `0x${string}` = ZERO): `0x${stri
   const value = process.env[name];
   if (typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value)) {
     return value as `0x${string}`;
+  }
+  return fallback;
+}
+
+function readBlockEnv(name: string, fallback?: bigint): bigint | undefined {
+  const value = process.env[name];
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return BigInt(value);
   }
   return fallback;
 }
@@ -95,6 +105,10 @@ const KNOWN_CHAINS: Record<number, ChainDeploy> = {
     sbtAddress: readAddressEnv(
       "NEXT_PUBLIC_SBT_ADDRESS_84532",
       BASE_SEPOLIA_FALLBACK.sbtAddress
+    ),
+    sbtDeploymentBlock: readBlockEnv(
+      "NEXT_PUBLIC_SBT_DEPLOY_BLOCK_84532",
+      BASE_SEPOLIA_SBT_DEPLOY_BLOCK
     ),
   },
   8453: {

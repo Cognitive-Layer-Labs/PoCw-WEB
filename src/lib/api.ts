@@ -4,6 +4,7 @@
  */
 
 const ORACLE_PROXY_BASE = "/api/oracle";
+const SUPPORTED_SOURCE_PROTOCOLS = new Set(["http:", "https:", "ipfs:"]);
 
 // ─── Types mirroring oracle-service SDK types ────────────────────────────────
 
@@ -120,6 +121,38 @@ export interface SessionConfig {
   chain?: ChainConfig;
 }
 
+export function validateIndexSourceUrl(source: string): string | null {
+  const value = source.trim();
+  if (!value) {
+    return "URL is required";
+  }
+
+  if (value.startsWith("ipfs://")) {
+    const remainder = value.slice("ipfs://".length).trim();
+    if (!remainder || remainder.startsWith("/") || /\s/.test(remainder)) {
+      return "Invalid IPFS URL. Use ipfs://<CID>[/path]";
+    }
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return "Invalid URL. Use http://, https://, or ipfs://";
+  }
+
+  if (!SUPPORTED_SOURCE_PROTOCOLS.has(parsed.protocol)) {
+    return `Unsupported URL protocol \"${parsed.protocol}\". Use http://, https://, or ipfs://`;
+  }
+
+  if (!parsed.hostname) {
+    return "Invalid URL. Hostname is required";
+  }
+
+  return null;
+}
+
 // ─── API functions ────────────────────────────────────────────────────────────
 
 /** Upload a raw file (PDF or text). The backend extracts text server-side. */
@@ -145,6 +178,11 @@ export async function uploadFile(
 export async function indexContent(
   source: string
 ): Promise<{ knowledgeId: string; status: string; contentId?: number }> {
+  const validationError = validateIndexSourceUrl(source);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
   let res: Response;
   try {
     res = await fetch(`${ORACLE_PROXY_BASE}/index`, {

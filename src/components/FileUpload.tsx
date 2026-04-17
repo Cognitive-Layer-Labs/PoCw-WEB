@@ -4,7 +4,7 @@ import { useCallback, useState, useRef, useEffect } from "react";
 import { Upload, FileText, CheckCircle, Loader2, Link, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { uploadFile, indexContent, pollIndexStatus } from "@/lib/api";
+import { uploadFile, indexContent, pollIndexStatus, validateIndexSourceUrl } from "@/lib/api";
 
 interface FileUploadProps {
   /** Called with the knowledgeId once indexing is complete */
@@ -116,6 +116,16 @@ export function FileUpload({ onIndexed }: FileUploadProps) {
   const handleUrlSubmit = useCallback(async () => {
     const url = urlInput.trim();
     if (!url) return;
+
+    const validationError = validateIndexSourceUrl(url);
+    if (validationError) {
+      setPhase("error");
+      setErrorMsg(validationError);
+      setStatusMsg("");
+      setProgress(0);
+      return;
+    }
+
     setPhase("uploading");
     setStatusMsg("Fetching URL…");
     setProgress(5);
@@ -239,7 +249,7 @@ export function FileUpload({ onIndexed }: FileUploadProps) {
                 value={urlInput}
                 onChange={e => setUrlInput(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && !busy) handleUrlSubmit(); }}
-                placeholder="https://… or ipfs://…"
+                placeholder="https://..., http://..., or ipfs://..."
                 disabled={busy || phase === "ready"}
                 className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-muted/20 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
               />
@@ -288,7 +298,7 @@ export function FileUpload({ onIndexed }: FileUploadProps) {
 
           {!busy && phase === "idle" && (
             <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <FileText className="h-3 w-3" /> PDF URLs are supported — the oracle fetches and parses them server-side
+              <FileText className="h-3 w-3" /> Supported schemes: http://, https://, ipfs://
             </p>
           )}
         </div>

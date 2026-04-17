@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChainId, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { PoCWResult, OnchainAttestation } from "@/lib/api";
+import { saveToHistory, type SBTRecord } from "@/lib/history";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -324,6 +325,8 @@ function MintButton({
   sbtAddress: `0x${string}`;
 }) {
   const [isFixingRpc, setIsFixingRpc] = useState(false);
+  const chainId = useChainId();
+  const savedTokenUri = useRef<string | null>(null);
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
@@ -336,6 +339,23 @@ function MintButton({
     args: [BigInt(attestation.contentId)],
     query: { enabled: !!isConfirmed },
   });
+
+  useEffect(() => {
+    if (!isConfirmed || !tokenUri) return;
+    const uri = tokenUri as string;
+    if (savedTokenUri.current === uri) return;
+
+    const decoded = decodeSbtTokenUri(uri);
+    if (!decoded) return;
+
+    saveToHistory({
+      contentId: Number(attestation.contentId),
+      chainId,
+      ...decoded,
+    });
+
+    savedTokenUri.current = uri;
+  }, [isConfirmed, tokenUri, attestation.contentId, chainId]);
 
   if (isConfirmed && tokenUri) {
     const explorerBase = window.location.hostname === "localhost"
@@ -463,4 +483,59 @@ function MintButton({
       {isPending ? "Signing..." : isConfirming ? "Minting..." : "Mint SBT"}
     </Button>
   );
+}
+
+function decodeSbtTokenUri(uri: string): Omit<SBTRecord, "contentId" | "chainId"> | null {
+  try {
+    const base64Part = uri.split(",")[1];
+    if (!base64Part) return null;
+
+    const json = atob(base64Part);
+    const data = JSON.parse(json);
+    const attrs = data.attributes || [];
+
+    const find = (trait: string) => attrs.find((a: any) => a.trait_type === trait)?.value;
+    const asNumber = (value: unknown): number | undefined => {
+      if (typeof value === "number") return value;
+      if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
+        return Number(value);
+      }
+      return undefined;
+    };
+
+    const score = find("Score") ?? 0;
+    const theta = find("Theta");
+    const se = find("Std Error");
+    const questions = find("Questions");
+    const bloom = find("Bloom");
+    const rawTs = find("Timestamp");
+    const passed = find("Passed");
+    const title = find("Title");
+    const source = find("Source");
+    const oracle = find("Oracle");
+    const qTypes = find("QTypes");
+    const ciLow = find("CI Low");
+    const ciHigh = find("CI High");
+    const converged = find("Converged");
+
+    return {
+      score: asNumber(score) ?? 0,
+      subject: typeof data.name === "string" ? data.name : "Unknown",
+      timestamp: typeof rawTs === "string" ? rawTs : "",
+      passed: passed === 1 || passed === "1" || passed === true,
+      theta: asNumber(theta),
+      se: asNumber(se),
+      questions: asNumber(questions),
+      bloom: typeof bloom === "string" ? bloom : undefined,
+      title: typeof title === "string" ? title : undefined,
+      source: typeof source === "string" ? source : undefined,
+      oracle: typeof oracle === "string" ? oracle : undefined,
+      qTypes: typeof qTypes === "string" ? qTypes : undefined,
+      ciLow: asNumber(ciLow),
+      ciHigh: asNumber(ciHigh),
+      converged: converged === 1 || converged === "1" || converged === true,
+    };
+  } catch {
+    return null;
+  }
 }
