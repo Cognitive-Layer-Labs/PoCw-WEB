@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useChainId, useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { PoCWResult, OnchainAttestation } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { CheckCircle, XCircle, Trophy, TrendingUp, Lock, Sparkles, RotateCcw, ChevronDown, ChevronUp } from "lucide-react";
@@ -258,7 +258,9 @@ export function GradingResults({
                   Mint Your Soulbound Token
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Content #{result.contentId} · On-chain attestation — permanent &amp; non-transferable
+                  Content #{result.contentId} · {isOnchain
+                    ? "On-chain attestation — permanent & non-transferable"
+                    : "Off-chain attestation"}
                 </p>
               </div>
             </div>
@@ -273,13 +275,13 @@ export function GradingResults({
               <p className="text-xs text-muted-foreground text-center">
                 Connect your wallet to mint
               </p>
-            ) : !hasContracts ? (
-              <p className="text-xs text-muted-foreground text-center">
-                Contract addresses unavailable for this session and chain — verify NEXT_PUBLIC_CONTROLLER_ADDRESS_{chainId}
-              </p>
             ) : !isOnchain ? (
               <p className="text-xs text-muted-foreground text-center">
                 On-chain attestation not available for this session
+              </p>
+            ) : !hasContracts ? (
+              <p className="text-xs text-muted-foreground text-center">
+                Contract addresses unavailable for this session and chain — verify {"NEXT_PUBLIC_CONTROLLER_ADDRESS_" + chainId}
               </p>
             ) : null}
           </CardContent>
