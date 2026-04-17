@@ -14,7 +14,38 @@ import { WalletButton } from "@/components/WalletButton";
 const EXPLORER_URLS: Record<number, string> = {
   31337: "http://localhost:5100",
   84532: "https://base-sepolia.blockscout.com",
+  8453: "https://basescan.org",
 };
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+const CHAIN_META: Record<number, {
+  chainName: string;
+  nativeCurrency: { name: string; symbol: string; decimals: number };
+  rpcUrls: string[];
+  blockExplorerUrls: string[];
+}> = {
+  31337: {
+    chainName: "Anvil Local",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["http://127.0.0.1:8545"],
+    blockExplorerUrls: ["http://localhost:5100"],
+  },
+  84532: {
+    chainName: "Base Sepolia",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://sepolia.base.org"],
+    blockExplorerUrls: ["https://base-sepolia.blockscout.com"],
+  },
+  8453: {
+    chainName: "Base Mainnet",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://mainnet.base.org"],
+    blockExplorerUrls: ["https://basescan.org"],
+  },
+};
+
+const CHAIN_PRIORITY = [84532, 8453, 31337] as const;
 
 const BLOOM_LEVELS = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"];
 
@@ -31,8 +62,26 @@ export default function HistoryPage() {
   const chainId = useChainId();
   const publicClient = usePublicClient();
   const { sbtAddress, controllerAddress } = getChainConfig(chainId);
-  const hasContracts = sbtAddress !== "0x0000000000000000000000000000000000000000";
-  const explorerUrl = EXPLORER_URLS[chainId];
+  const hasContracts = sbtAddress !== ZERO_ADDRESS && controllerAddress !== ZERO_ADDRESS;
+
+  const deployedChainIds = CHAIN_PRIORITY.filter((id) => {
+    const config = getChainConfig(id);
+    return config.controllerAddress !== ZERO_ADDRESS && config.sbtAddress !== ZERO_ADDRESS;
+  });
+
+  const hasAnyDeployedChains = deployedChainIds.length > 0;
+  const isWrongNetwork = hasAnyDeployedChains && !hasContracts;
+  const preferredChainId = hasContracts ? chainId : deployedChainIds[0];
+  const effectiveChainId = preferredChainId ?? chainId;
+  const preferredChainMeta = preferredChainId ? CHAIN_META[preferredChainId] : undefined;
+  const currentChainName = CHAIN_META[chainId]?.chainName ?? `Chain ${chainId}`;
+  const deployedChainLabels = deployedChainIds
+    .map((id) => `${CHAIN_META[id]?.chainName ?? `Chain ${id}`} (${id})`)
+    .join(", ");
+
+  const effectiveChainConfig = getChainConfig(effectiveChainId);
+  const effectiveSbtAddress = effectiveChainConfig.sbtAddress;
+  const explorerUrl = EXPLORER_URLS[effectiveChainId];
 
   const [records, setRecords] = useState<SBTRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -41,13 +90,39 @@ export default function HistoryPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
 
+  const switchToPreferredChain = useCallback(async () => {
+    if (!preferredChainId || !preferredChainMeta || preferredChainId === chainId) return;
+
+    try {
+      await window.ethereum?.request?.({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: `0x${preferredChainId.toString(16)}` }],
+      });
+    } catch (switchError: unknown) {
+      // Chain not added to wallet — add it first.
+      const code = (switchError as { code?: number })?.code;
+      if (code === 4902) {
+        await window.ethereum?.request?.({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: `0x${preferredChainId.toString(16)}`,
+            chainName: preferredChainMeta.chainName,
+            nativeCurrency: preferredChainMeta.nativeCurrency,
+            rpcUrls: preferredChainMeta.rpcUrls,
+            blockExplorerUrls: preferredChainMeta.blockExplorerUrls,
+          }],
+        });
+      }
+    }
+  }, [preferredChainId, preferredChainMeta, chainId]);
+
   useEffect(() => {
     setMounted(true);
-    // Load valid (non-expired) history for current chain.
-    const cached = loadHistory(chainId);
+    // Load valid (non-expired) history for deployed chain when wallet is on another network.
+    const cached = loadHistory(effectiveChainId);
     setRecords(cached);
-    setScanned(cached.length > 0 || hasFreshHistorySnapshot(chainId));
-  }, [chainId]);
+    setScanned(cached.length > 0 || hasFreshHistorySnapshot(effectiveChainId));
+  }, [effectiveChainId]);
 
   // Detect chain reset (e.g. Anvil restart) and clear stale cache
   useEffect(() => {
@@ -197,26 +272,6 @@ export default function HistoryPage() {
     );
   }
 
-  if (!hasContracts) {
-    return (
-      <div className="max-w-xl mx-auto py-16">
-        <Card className="border-border/60">
-          <CardContent className="pt-8 pb-8 flex flex-col items-center gap-6 text-center">
-            <div className="p-4 rounded-2xl bg-muted/10 border border-border/40">
-              <FileText className="h-10 w-10 text-muted-foreground" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold mb-2">Contracts Not Deployed</h2>
-              <p className="text-sm text-muted-foreground max-w-sm">
-                The SBT contract is not deployed on the current chain. History will be available once contracts are deployed.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-xl mx-auto py-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -232,12 +287,51 @@ export default function HistoryPage() {
               <Trash2 className="h-3.5 w-3.5" /> Clear
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={scanOnChain} disabled={loading} className="gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={isWrongNetwork ? switchToPreferredChain : scanOnChain}
+            disabled={loading || (!hasContracts && !isWrongNetwork)}
+            className="gap-2"
+          >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-            {loading ? "Scanning..." : scanned ? "Rescan" : "Scan SBTs"}
+            {loading
+              ? "Scanning..."
+              : isWrongNetwork
+              ? `Switch to ${preferredChainMeta?.chainName ?? "deployed chain"}`
+              : scanned
+              ? "Rescan"
+              : "Scan SBTs"}
           </Button>
         </div>
       </div>
+
+      {!hasContracts && (
+        <Card className="border-border/60">
+          <CardContent className="pt-5 pb-5">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-muted/10 border border-border/40">
+                <FileText className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium">
+                  {isWrongNetwork ? "Wrong Network" : "Contracts Not Deployed"}
+                </p>
+                {isWrongNetwork ? (
+                  <p className="text-xs text-muted-foreground">
+                    Connected to <strong>{currentChainName} ({chainId})</strong>. Deployed contracts are configured on <strong>{deployedChainLabels}</strong>.
+                    Switch network to scan live SBTs. Cached history for chain <strong>{effectiveChainId}</strong> is still shown below.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No contract addresses are configured for your current deployment. Set NEXT_PUBLIC_SBT_ADDRESS_{chainId} and NEXT_PUBLIC_CONTROLLER_ADDRESS_{chainId}, then redeploy.
+                  </p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {error && (
         <div className="p-3 rounded-lg border border-red-500/30 bg-red-500/5">
@@ -259,7 +353,7 @@ export default function HistoryPage() {
         </Card>
       )}
 
-      {!scanned && !loading && (
+      {!scanned && !loading && hasContracts && (
         <Card className="border-border/60">
           <CardContent className="pt-8 pb-8 flex flex-col items-center gap-4 text-center">
             <FileText className="h-12 w-12 text-muted-foreground/30" />
@@ -305,8 +399,8 @@ export default function HistoryPage() {
                     <Badge variant="outline" className={`${record.passed ? "border-green-500/30 text-green-400" : "border-red-500/30 text-red-400"}`}>
                       {record.passed ? "Passed" : "Failed"}
                     </Badge>
-                    {explorerUrl && sbtAddress && (
-                      <a href={`${explorerUrl}/address/${sbtAddress}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground/50 flex items-center gap-0.5 hover:text-primary">
+                    {explorerUrl && effectiveSbtAddress !== ZERO_ADDRESS && (
+                      <a href={`${explorerUrl}/address/${effectiveSbtAddress}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground/50 flex items-center gap-0.5 hover:text-primary">
                         Explorer <ExternalLink className="h-2.5 w-2.5" />
                       </a>
                     )}
